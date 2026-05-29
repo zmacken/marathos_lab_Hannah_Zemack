@@ -1,7 +1,10 @@
 from pyspark import pipelines as dp
-from pyspark.sql.functions import col, regexp_extract, when, size, split, get, lit, regexp_replace
+from pyspark.sql.functions import (
+    col, regexp_extract, when, size, split, get, lit, regexp_replace,
+    dense_rank, sha2, concat_ws
+)
+from pyspark.sql.window import Window
 from utils.utils import rename_columns_to_snake_case
-
 
 @dp.table(
     name="marathos.silver.marathos_obt",
@@ -21,9 +24,6 @@ def cleaned_marathos():
     # Läser in landkodstabellen och väljer ut ISO3-koden samt det vanliga landsnamnet
     df_countries = rename_columns_to_snake_case(
         spark.read.table("marathos.bronze.raw_country_code")
-    ).select(
-        col("iso3").alias("country_code"),
-        col("country_common")
     )
 
     return (
@@ -51,7 +51,7 @@ def cleaned_marathos():
                     get(split(col("performance_clean"), ":"), 1).cast("float") / 60 +
                     get(split(col("performance_clean"), ":"), 2).cast("float") / 3600
                 ).when(
-                    # MM:SS-format → minuter + sekunder/60
+                    # MM:SS-format → minuter/60 + sekunder/3600
                     size(split(col("performance_clean"), ":")) == 2,
                     get(split(col("performance_clean"), ":"), 0).cast("float") +
                     get(split(col("performance_clean"), ":"), 1).cast("float") / 60
@@ -67,17 +67,29 @@ def cleaned_marathos():
             ).otherwise(lit(None))
         )
         # Kopplar ihop med landkodstabellen för att slå upp atletens landsnamn
+        # Behåller alla atleter även om landkoden saknas (left join)
         .join(
             df_countries,
             col("athlete_country") == col("country_code"),
-            how="left"  # Behåller alla atleter även om landkoden saknas
+            how="left"
         )
-        .withColumnRenamed("country_common", "athlete_country_name")
-        # Ta ut namnet utan country code
+        .withColumnRenamed("country_name", "athlete_country_name")
+        .withColumnRenamed("event_distance/length", "event_distance_length")
+        # Extraherar landets förkortning från parentesen i slutet av eventnamnet, t.ex. "(GER)"
         .withColumn("event_country", regexp_extract(col("event_name"), r"\(([^)]+)\)$", 1))
-        # Ta bort landet + parentes från event-namnet
+        # Tar bort landets förkortning och parentesen från eventnamnet för ett renare namn
         .withColumn("event_name_clean", regexp_replace(col("event_name"), r"\s*\([^)]+\)$", ""))
-        # Tar bort hjälpkolumnen country_code och döper om landsnamnet till ett tydligare namn
+        # Tar bort kolumner som inte längre behövs efter transformationerna
         .drop("athlete_performance", "performance_clean", "event_name")
-        
+
+        # --- Surrogatnycklar ---
+        # event_id: deterministisk hash av det rensade eventnamnet.
+        # sha2 används istället för dense_rank så att nyckeln är stabil mellan
+        # pipeline-körningar och inte beror på radordning (säkert för streaming).
+        .withColumn(
+            "event_id",
+            sha2(col("event_name_clean"), 256)
+        )
+        # athlete_id: finns redan som kolumn i källdata — ingen ny nyckel skapas.
+        # Kolumnen behålls som den är från bronze-lagret.
     )
