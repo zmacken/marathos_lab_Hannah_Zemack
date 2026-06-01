@@ -8,6 +8,6 @@ SELECT
   event_number_of_finishers,
   performance_hours,
   performance_km,
-  athlete_average_speed
+  athlete_avg_speed_kmh
 FROM
   STREAM marathos.silver.marathos_obt;

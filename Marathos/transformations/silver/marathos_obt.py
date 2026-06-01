@@ -1,7 +1,7 @@
 from pyspark import pipelines as dp
 from pyspark.sql.functions import (
     col, regexp_extract, when, size, split, get, lit, regexp_replace,
-    dense_rank, sha2, concat_ws
+    dense_rank, sha2, concat_ws, trim, expr
 )
 from pyspark.sql.window import Window
 from utils.utils import rename_columns_to_snake_case
@@ -33,11 +33,23 @@ def cleaned_marathos():
             "event_unit",
             regexp_extract(col("event_distance/length"), r"(km|mi|h)", 1)
         )
+
+        #Klassificerar eventtyp baserat på distansformat så man inte missar de konstiga utstickarna
+        .withColumn(
+            "event_type",
+            when(col("event_distance/length").rlike(r"Etappen"), "multi_stage")
+            .when(col("event_distance/length").rlike(r"^\d+d$"), "time_based")
+            .when(col("event_unit") == "h", "time_based")
+            .when(col("event_unit").isin("km", "mi"), "distance_based")
+            .otherwise("unknown")
+        )
+
         # Extraherar den numeriska delen av prestandavärdet (t.ex. "2:30:45" ur "2:30:45 h")
         .withColumn(
             "performance_clean",
             regexp_extract(col("athlete_performance"), r"^([\d:\.]+)", 1)
         )
+
         # Omvandlar prestationen till timmar för distanslopp (km/mi)
         # Hanterar både HH:MM:SS- och MM:SS-format
         .withColumn(
@@ -45,27 +57,27 @@ def cleaned_marathos():
             when(
                 col("event_unit").isin("km", "mi"),
                 when(
-                    # HH:MM:SS-format → timmar + minuter/60 + sekunder/3600
                     size(split(col("performance_clean"), ":")) == 3,
-                    get(split(col("performance_clean"), ":"), 0).cast("float") +
-                    get(split(col("performance_clean"), ":"), 1).cast("float") / 60 +
-                    get(split(col("performance_clean"), ":"), 2).cast("float") / 3600
+                    expr("try_cast(split(performance_clean, ':')[0] AS FLOAT)") +
+                    expr("try_cast(split(performance_clean, ':')[1] AS FLOAT)") / 60 +
+                    expr("try_cast(split(performance_clean, ':')[2] AS FLOAT)") / 3600
                 ).when(
-                    # MM:SS-format → minuter/60 + sekunder/3600
                     size(split(col("performance_clean"), ":")) == 2,
-                    get(split(col("performance_clean"), ":"), 0).cast("float") +
-                    get(split(col("performance_clean"), ":"), 1).cast("float") / 60
+                    expr("try_cast(split(performance_clean, ':')[0] AS FLOAT)") +
+                    expr("try_cast(split(performance_clean, ':')[1] AS FLOAT)") / 60
                 ).otherwise(lit(None))
             ).otherwise(lit(None))
         )
+
         # För tidbaserade lopp (h) används prestandavärdet direkt som distans i km
         .withColumn(
             "performance_km",
             when(
                 col("event_unit") == "h",
-                col("performance_clean").cast("float")
+                expr("try_cast(performance_clean AS FLOAT)") 
             ).otherwise(lit(None))
         )
+
         # Kopplar ihop med landkodstabellen för att slå upp atletens landsnamn
         # Behåller alla atleter även om landkoden saknas (left join)
         .join(
@@ -73,14 +85,68 @@ def cleaned_marathos():
             col("athlete_country") == col("country_code"),
             how="left"
         )
-        .withColumnRenamed("country_name", "athlete_country_name")
-        .withColumnRenamed("event_distance/length", "event_distance_length")
+        .withColumnRenamed(
+            "country_name", 
+            "athlete_country_name"
+        )
+        .withColumnRenamed(
+            "event_distance/length", 
+            "event_distance_length"
+        )
+
         # Extraherar landets förkortning från parentesen i slutet av eventnamnet, t.ex. "(GER)"
-        .withColumn("event_country", regexp_extract(col("event_name"), r"\(([^)]+)\)$", 1))
+        .withColumn(
+            "event_country", 
+            regexp_extract(col("event_name"), r"\(([^)]+)\)$", 1)
+        )
+
         # Tar bort landets förkortning och parentesen från eventnamnet för ett renare namn
-        .withColumn("event_name_clean", regexp_replace(col("event_name"), r"\s*\([^)]+\)$", ""))
+        .withColumn(
+            "event_name_clean", 
+            regexp_replace(col("event_name"), r"\s*\([^)]+\)$", "")
+        )
+
+        #Fixa athelete_averafe_speed till kmh
+        .withColumn(
+            "athlete_avg_speed_kmh",
+            col("athlete_average_speed").cast("double") / 1000
+        )
+
+        #skapa en athlete age för att senare lättare kunna göra beräkningar
+        .withColumn(
+            "athlete_age",
+            when(
+                col("athlete_year_of_birth").isNotNull(),
+                col("year_of_event") - col("athlete_year_of_birth").cast("int")
+            ).otherwise(lit(None))
+        )
+
+        #Normalisera tomma stränga i athlete_club till null
+        .withColumn(
+            "athlete_club",
+            when(trim(col("athlete_club")) == "", lit(None)).otherwise(col("athlete_club"))
+        )
+
+        #Ta bort dagar som slutar på d
+        .filter(
+            ~col(
+                "event_distance_length").rlike(r"^\d+d$"
+            )
+        )
+
+        #Ta bort där event och perfomance är felaktigt
+        .filter(
+            ~(col("event_unit").isin("km", "mi") & col("performance_hours").isNull()) &
+            ~((col("event_unit") == "h") & col("performance_km").isNull())  # ← parentes runt ==
+        )
+
         # Tar bort kolumner som inte längre behövs efter transformationerna
-        .drop("athlete_performance", "performance_clean", "event_name")
+        .drop(
+            "athlete_performance", 
+            "performance_clean", 
+            "event_name", 
+            "athlete_average_speed"
+            )
 
         # --- Surrogatnycklar ---
         # event_id: deterministisk hash av det rensade eventnamnet.
@@ -91,5 +157,4 @@ def cleaned_marathos():
             sha2(col("event_name_clean"), 256)
         )
         # athlete_id: finns redan som kolumn i källdata — ingen ny nyckel skapas.
-        # Kolumnen behålls som den är från bronze-lagret.
     )
