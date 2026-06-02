@@ -1,7 +1,7 @@
 from pyspark import pipelines as dp
 from pyspark.sql.functions import (
     col, regexp_extract, when, size, split, get, lit, regexp_replace,
-    dense_rank, sha2, concat_ws, trim, expr
+    dense_rank, sha2, concat_ws, trim, expr, to_date, concat
 )
 from pyspark.sql.window import Window
 from utils.utils import rename_columns_to_snake_case
@@ -125,7 +125,7 @@ def cleaned_marathos():
         # ---------------------------
         .join(
             countries_event,
-            col("event_country_code") == col("event_country_code"),
+            col("event_country") == col("event_country_code"),  # ← rätt kolumn
             "left"
         )
 
@@ -138,7 +138,7 @@ def cleaned_marathos():
         # Snitthastighet
         .withColumn(
             "athlete_avg_speed_kmh",
-            expr("try_cast(athlete_average_speed as double)")
+            expr("try_cast(regexp_replace(athlete_average_speed, ',', '.') as double)")
         )
 
         # Ålder
@@ -159,22 +159,35 @@ def cleaned_marathos():
         # Datumhantering
         .withColumn(
             "event_start_date",
+            # Enkelt datum: 01.05.1991
             when(
                 col("event_dates").rlike(r"^\d{2}\.\d{2}\.\d{4}$"),
-                expr("try_to_date(event_dates, 'dd.MM.yyyy')")
-            ).when(
+                to_date(col("event_dates"), "dd.MM.yyyy")
+            )
+            # Spann variant 1: 23.-24.11.1991
+            .when(
                 col("event_dates").rlike(r"^\d{2}\.-\d{2}\.\d{2}\.\d{4}$"),
-                expr("""
-                    try_to_date(
-                        concat(
-                            regexp_extract(event_dates, '^(\\d{2})\\.', 1),
-                            '.',
-                            regexp_extract(event_dates, '^\\d{2}\\.-\\d{2}\\.(\\d{2}\\.\\d{4})$', 1)
-                        ),
-                        'dd.MM.yyyy'
-                    )
-                """)
-            ).otherwise(lit(None))
+                to_date(
+                    concat(
+                        regexp_extract(col("event_dates"), r"^(\d{2})", 1),
+                        lit("."),
+                        regexp_extract(col("event_dates"), r"\.(\d{2}\.\d{4})$", 1)
+                    ),
+                    "dd.MM.yyyy"
+                )
+            )
+            # Spann variant 2: 30.04.-01.05.2016
+            .when(
+                col("event_dates").rlike(r"^\d{2}\.\d{2}\.-\d{2}\.\d{2}\.\d{4}$"),
+                to_date(
+                    concat(
+                        regexp_extract(col("event_dates"), r"^(\d{2}\.\d{2}\.)", 1),
+                        regexp_extract(col("event_dates"), r"(\d{4})$", 1)
+                    ),
+                    "dd.MM.yyyy"
+                )
+            )
+            .otherwise(lit(None))
         )
 
         # Filtrera bort etapper
@@ -191,7 +204,8 @@ def cleaned_marathos():
             "athlete_performance",
             "performance_clean",
             "event_name",
-            "athlete_average_speed"
+            "athlete_average_speed",
+            "event_dates"
         )
 
         # Surrogatnyckel
