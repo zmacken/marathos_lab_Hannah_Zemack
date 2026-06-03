@@ -165,8 +165,13 @@ def cleaned_marathos():
         # Datumhantering
         .withColumn(
             "event_start_date",
-            # Enkelt datum: 01.05.1991
+            # Enkelt datum: 1991-05-01
             when(
+                col("event_dates").rlike(r"^\d{4}-\d{2}-\d{2}$"),
+                to_date(col("event_dates"), "yyyy-MM-dd")
+            )
+            # Enkelt datum: 01.05.1991
+            .when(   
                 col("event_dates").rlike(r"^\d{2}\.\d{2}\.\d{4}$"),
                 to_date(col("event_dates"), "dd.MM.yyyy")
             )
