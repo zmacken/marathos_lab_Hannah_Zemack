@@ -206,7 +206,8 @@ def cleaned_marathos():
             "performance_clean",
             "event_name",
             "athlete_average_speed",
-            "event_dates"
+            "event_dates",
+            "event_distance_length"
         )
 
         # Surrogatnyckel
