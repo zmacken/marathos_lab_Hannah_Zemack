@@ -19,10 +19,15 @@ def cleaned_marathos():
 
     # ---------------------------
     # Läs in rådata (bronze)
-    # ---------------------------
-    df = rename_columns_to_snake_case(
-        spark.sql("SELECT * FROM STREAM marathos.bronze.raw_marathos")
+    df_main = rename_columns_to_snake_case(
+        spark.sql("SELECT * FROM STREAM (marathos.bronze.raw_marathos)")
     )
+
+    df_second = rename_columns_to_snake_case(
+        spark.sql("SELECT * FROM STREAM(marathos.bronze.raw_second_marathon)")  # <-- STREAM() runt batch-tabellen för att det ska fungera med union
+    )
+
+    df = df_main.unionByName(df_second, allowMissingColumns=True)
 
     # ---------------------------
     # Läs in landkodstabell
