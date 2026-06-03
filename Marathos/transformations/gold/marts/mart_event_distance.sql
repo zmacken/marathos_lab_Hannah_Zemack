@@ -1,4 +1,5 @@
-CREATE OR REPLACE VIEW marathos.gold.mart_event_distance AS
+CREATE OR REPLACE VIEW marathos.gold.mart_event_distance
+    COMMENT "Mart table - gold layer" AS
 SELECT
   e.event_distance_length,
   e.event_unit,

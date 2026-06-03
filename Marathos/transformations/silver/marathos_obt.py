@@ -63,6 +63,12 @@ def cleaned_marathos():
             .otherwise("unknown")
         )
 
+        # Extrahera numeriskt avstånd/tid
+        .withColumn(
+            "event_distance_numeric",
+            regexp_extract(col("event_distance/length"), r"^([\d.]+)", 1).cast("float")
+        )
+
         # Rensa prestation
         .withColumn(
             "performance_clean",
@@ -96,18 +102,15 @@ def cleaned_marathos():
             ).otherwise(lit(None))
         )
 
-        # ---------------------------
         # Första joinen (tydlig aliasad lookup)
-        # ---------------------------
         .join(
             countries_athlete,
             col("athlete_country") == col("athlete_country_code"),
             "left"
         )
 
-        # ---------------------------
+
         # Byt namn på kolumn efter join
-        # ---------------------------
         .withColumnRenamed(
             "event_distance/length",
             "event_distance_length"
@@ -120,9 +123,7 @@ def cleaned_marathos():
             regexp_extract(col("event_name"), r"\(([^)]+)\)$", 1)
         )
 
-        # ---------------------------
         # andra joinen (separat lookup → ingen ambiguity)
-        # ---------------------------
         .join(
             countries_event,
             col("event_country") == col("event_country_code"),  # ← rätt kolumn

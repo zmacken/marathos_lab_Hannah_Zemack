@@ -1,4 +1,5 @@
-CREATE OR REPLACE VIEW marathos.gold.mart_events_per_year AS
+CREATE OR REPLACE VIEW marathos.gold.mart_events_per_year
+    COMMENT "Mart table - gold layer" AS
 SELECT
   year_of_event,
   e.event_country,
