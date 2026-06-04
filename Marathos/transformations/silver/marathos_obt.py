@@ -198,6 +198,20 @@ def cleaned_marathos():
             )
             .otherwise(lit(None))  # Om inget datumformat matchar → null
         )
+        # Slå ihop W → F i könskolumnen
+        .withColumn(
+            "athlete_gender",
+            when(col("athlete_gender") == "W", "F").otherwise(col("athlete_gender"))
+        )
+
+        # Skapa läsbar könskategori
+        .withColumn(
+            "athlete_gender_label",
+            when(col("athlete_gender") == "F", "female")
+            .when(col("athlete_gender") == "M", "male")
+            .when(col("athlete_gender") == "X", "other")
+            .otherwise(lit(None))
+        )
 
         # Filtrera bort etapper
         .filter(~col("event_distance_length").rlike(r"^\d+d$"))  # Tar bort rader där distansen är flerstagsformat (t.ex. "6d")
