@@ -30,3 +30,7 @@ Källkoden är strukturerad enligt följande:
 * `explorations/` - Explorativ dataanalys (EDA)[cite: 1].
 * `transformations/` - Folders för pipeline-stegen (Bronze, Silver, Gold).
 * `utils/` - Återanvändbara hjälpfunktioner och moduler.
+
+
+
+LLM has been used for troubleshooting but not for whole code blocks.
